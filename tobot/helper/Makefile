@@ -1,4 +1,4 @@
-# Makefile to build FLIP kernel modules
+# Makefile of DirecToBot helper
 #
 # Author:
 # Giovanni Bembo
