@@ -1,13 +1,10 @@
-# Makefile to build FLIP kernel modules
+# Makefile of DirecTo6 kernel modules
 #
 # Author:
 # Giovanni Bembo
 # Departement of computer engineering
 # University of Rome "Tor Vergata"
 # Rome, Italy
-# syntax:
-# make -f Makefile.jB CFLAGS_gvn_hook.o=-DjB
-# sudo make -f Makefile.jB install
 
 ifneq ($(KERNELRELEASE),)
 
