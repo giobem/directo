@@ -8,7 +8,7 @@
 
 ifneq ($(KERNELRELEASE),)
 
-obj-m := directo6.o
+obj-m := directo4.o
 
 else
 
@@ -17,7 +17,7 @@ PWD := $(shell pwd)
 
 default:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
-	cp directo6.ko /lib/modules/$(shell uname -r)/kernel/net/netfilter/
+	cp directo4.ko /lib/modules/$(shell uname -r)/kernel/net/netfilter/
 
 endif
 
