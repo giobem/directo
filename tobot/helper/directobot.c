@@ -166,116 +166,104 @@ int main(int argc,char *argv[])
       perror("Cannot bind port");
       return -2;
     }
-  pid=fork();
-  if (!pid)
+  if (sqlite3_open("/dev/shm/damDB.tmp",&damDB))
     {
-      if (sqlite3_open("/dev/shm/damDB.tmp",&damDB))
-	{
-	  perror("Cannot create DAM tables");
-	  return -6;
-	}
-      init_ST();
-      if ((to6_dirt_dev=open("/dev/dirt6",O_RDONLY))==-1)
-	{
-	  perror("Cannot translate IPv4 packets");
-	  return -41;
-	}
-      while (1)
-	{
-	  direct_msg_len=read(to6_dirt_dev,direct_msg,DIRECTOBOT_BUFFER_SIZE);
-	  usleep(1);
-	  switch (direct_msg[0])
-	    {
-            case FROM4_INCOMING:
-	      break;
-	    case GO:
-	      continue;
-	    case EXITNOW:
-	      {
-		close(to6_dirt_dev);
-		sqlite3_close(damDB);
-		wait(&pid);
-		system("rm -f /dev/shm/damDB.tmp");
-		return 0;
-	      }
-	    default:
-	      continue;
-	    }
-	  switch (chk_in4_msg(&(direct_msg[1]),direct_msg_len-1))
-	    {
-	    case NO_CODE:
-	      {
-		sendto6(&(direct_msg[1]),direct_msg_len-1,NO_CODE);
-		break;
-	      }
-	    case RELAY_TO6:
-	      {
-		sendto6(&(direct_msg[1]),direct_msg_len-1,RELAY_TO6);
-		break;
-	      }
-	    case RELAY_TO6DR:
-	      {
-		sendto6(&(direct_msg[1]),direct_msg_len-1,RELAY_TO6DR);
-		break;
-	      }
-	    default: break;
-	    }
-	}
+      perror("Cannot create DAM tables");
+      return -6;
     }
-  else if (pid>0)
+  init_ST();
+  srand(time(NULL));
+  if ((to6_dirt_dev=open("/dev/dirt6",O_RDONLY))==-1)
     {
-      if (sqlite3_open("/dev/shm/damDB.tmp",&damDB))
+      perror("Cannot translate IPv4 packets");
+      return -41;
+    }
+  if ((to4_dirt_dev=open("/dev/dirt4",O_RDONLY))==-1)
+    {
+      perror("Cannot translate IPv6 packets");
+      return -42;
+    }
+  while (1)
+    {
+      direct_msg_len=read(to6_dirt_dev,direct_msg,DIRECTOBOT_BUFFER_SIZE);
+      usleep(1);
+      switch (direct_msg[0])
         {
-          perror("Cannot create DAM tables");
-          return -6;
-	}
-      init_ST();
-      srand(time(NULL));
-      if ((to4_dirt_dev=open("/dev/dirt4",O_RDONLY))==-1)
-        {
-          perror("Cannot translate IPv6 packets");
-          return -42;
-        }
-      while (1)
-        {
-          direct_msg_len=read(to4_dirt_dev,direct_msg,DIRECTOBOT_BUFFER_SIZE);
-	  usleep(1);
-          switch (direct_msg[0])
-            {
-	    case FROM6_INCOMING:
-	      break;
-	    case GO:
-	      continue;
-            case EXITNOW:
+        case FROM6_INCOMING:
+          break;
+        case FROM4_INCOMING:
+          {
+            switch (chk_in4_msg(&(direct_msg[1]),direct_msg_len-1))
               {
-                close(to4_dirt_dev);
-		sqlite3_close(damDB);
-		system("rm -f /dev/shm/damDB.tmp");
-                return 0;
+              case NO_CODE:
+                {
+                  sendto6(&(direct_msg[1]),direct_msg_len-1,NO_CODE);
+                  break;
+                }
+              case RELAY_TO6:
+                {
+                  sendto6(&(direct_msg[1]),direct_msg_len-1,RELAY_TO6);
+                  break;
+                }
+              case RELAY_TO6DR:
+                {
+                  sendto6(&(direct_msg[1]),direct_msg_len-1,RELAY_TO6DR);
+                  break;
+                }
+              case GO:
+                break;
+              case EXITNOW:
+                {
+                  close(to6_dirt_dev);
+                  sqlite3_close(damDB);
+                  wait(&pid);
+                  system("rm -f /dev/shm/damDB.tmp");
+                  return 0;
+                }
+              default: break;
               }
-            default:
-              continue;
-            }
-	  switch (chk_in6_msg(&(direct_msg[1]),direct_msg_len-1))
-	    {
-	    case NO_CODE:
-	      {
-		sendto4(&(direct_msg[1]),direct_msg_len-1,NO_CODE);
-		break;
-	      }
-	    case RELAY_TO4:
-	      {
-		sendto4(&(direct_msg[1]),direct_msg_len-1,RELAY_TO4);
-		break;
-	      }
-	    case RELAY_TO4DR:
-	      {
-		sendto4(&(direct_msg[1]),direct_msg_len-1,RELAY_TO4DR);
-		break;
-	      }
-	    default: break;
-	    }
-	}
+          }
+        default: break;
+        }
+      direct_msg_len=read(to4_dirt_dev,direct_msg,DIRECTOBOT_BUFFER_SIZE);
+      switch (direct_msg[0])
+        {
+        case FROM4_INCOMING:
+          break;
+        case FROM6_INCOMING:
+          {
+            switch (chk_in6_msg(&(direct_msg[1]),direct_msg_len-1))
+              {
+              case NO_CODE:
+                {
+                  sendto4(&(direct_msg[1]),direct_msg_len-1,NO_CODE);
+                  break;
+                }
+              case RELAY_TO4:
+                {
+                  sendto4(&(direct_msg[1]),direct_msg_len-1,RELAY_TO4);
+                  break;
+                }
+              case RELAY_TO4DR:
+                {
+                  sendto4(&(direct_msg[1]),direct_msg_len-1,RELAY_TO4DR);
+                  break;
+                }
+              default: break;
+              }
+          }
+        case GO:
+          break;
+        case EXITNOW:
+          {
+            close(to6_dirt_dev);
+            sqlite3_close(damDB);
+            wait(&pid);
+            system("rm -f /dev/shm/damDB.tmp");
+            return 0;
+          }
+        default:
+          break;
+        }
     }
 }
-
