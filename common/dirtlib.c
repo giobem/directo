@@ -49,6 +49,7 @@ int chk_in4_msg(unsigned char *pkt,int pkt_len)
   switch (drft->code)
     {
     case RELAY_TO6:
+    case RELAY_TO6DR:
       {
         if
           (
@@ -73,12 +74,6 @@ int chk_in6_msg(unsigned char *pkt,int pkt_len)
 
   drft=(struct direct_footer *)(pkt+pkt_len-sizeof(struct direct_footer));
   hdr6=(struct ip6_hdr *)pkt;
-  /*  drft=
-    (struct direct_footer *)
-    (
-     pkt+ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)+sizeof(struct ip6_hdr)-
-     sizeof(struct direct_footer)
-     );*/
   switch (drft->code)
     {
     case RELAY_TO4:
