@@ -66,41 +66,37 @@ ssize_t to4_dirt(struct file *filp,char *buff,size_t count,loff_t *offp)
       mutex_unlock(&to4_sem);
       mutex_unlock(&to6_sem);
       go=EXITNOW;
-      return copy_to_user(buff,&go,sizeof(char));
+      rv=copy_to_user(buff,&go,sizeof(char));
+      return sizeof(char);
     }
   if (to4_jptr!=iptrt)
     {
-      if (atomic_read(&(to4_pkt[to4_jptr].len)))
-	{
-	  switch (to4_pkt[to4_jptr].buff[1]&0xf0)
-	    {
-	    case 0x60:
-	      break;
-	    default:
-	      {
-		mutex_unlock(&to4_sem);
-		return copy_to_user(buff,&go,sizeof(char));
-	      }
-	    }
-	  to4_pkt[to4_jptr].buff[0]=DIRECT_OUTGOING;
-	  rv=
-	    copy_to_user
-	    (
-	     buff,
-	     (unsigned char *)(to4_pkt[to4_jptr].buff),
-	     atomic_read(&(to4_pkt[to4_jptr].len))
-	     );
-	  rv=atomic_read(&(to4_pkt[to4_jptr].len));
-	  atomic_set(&(to4_pkt[to4_jptr].len),0);
-	  to4_jptr++;
-	  if (to4_jptr==MAX_PACKET_BUFFERS)
-	    to4_jptr=0;
-	  mutex_unlock(&to4_sem);
-	  return rv;
-	}
+      if ((l=atomic_read(&(to4_pkt[to4_jptr].len))))
+        {
+          switch (to4_pkt[to4_jptr].buff[1]&0xf0)
+            {
+            case 0x60:
+              break;
+            default:
+              {
+                mutex_unlock(&to4_sem);
+                rv=copy_to_user(buff,&go,sizeof(char));
+                return sizeof(char);
+              }
+            }
+          to4_pkt[to4_jptr].buff[0]=DIRECT_OUTGOING;
+          rv=copy_to_user(buff,(unsigned char *)(to4_pkt[to4_jptr].buff),l);
+          atomic_set(&(to4_pkt[to4_jptr].len),0);
+          to4_jptr++;
+          if (to4_jptr==MAX_PACKET_BUFFERS)
+            to4_jptr=0;
+          mutex_unlock(&to4_sem);
+          return l;
+        }
     }
+  rv=copy_to_user(buff,&go,sizeof(char));
   mutex_unlock(&to4_sem);
-  return copy_to_user(buff,&go,sizeof(char));
+  return sizeof(char);
 }
 
 ssize_t to6_dirt
@@ -118,41 +114,37 @@ ssize_t to6_dirt
       mutex_unlock(&to4_sem);
       mutex_unlock(&to6_sem);
       go=EXITNOW;
-      return copy_to_user(buff,&go,sizeof(char));
+      rv=copy_to_user(buff,&go,sizeof(char));
+      return sizeof(char);
     }
   if (to6_jptr!=iptrt)
     {
-      if (atomic_read(&(to6_pkt[to6_jptr].len)))
-	{
-	  switch (to6_pkt[to6_jptr].buff[1]&0xf0)
-	    {
-	    case 0x40:
-	      break;
-	    default:
-	      {
-		mutex_unlock(&to6_sem);
-		return copy_to_user(buff,&go,sizeof(char));
-	      }
-	    }
-	  to6_pkt[to6_jptr].buff[0]=DIRECT_INCOMING;
-	  rv=
-	    copy_to_user
-	    (
-	     buff,
-	     (unsigned char *)(to6_pkt[to6_jptr].buff),
-	     atomic_read(&(to6_pkt[to6_jptr].len))
-	     );
-	  rv=atomic_read(&(to6_pkt[to6_jptr].len));
-	  atomic_set(&(to6_pkt[to6_jptr].len),0);
-	  to6_jptr++;
-	  if (to6_jptr==MAX_PACKET_BUFFERS)
-	    to6_jptr=0;
-	  mutex_unlock(&to6_sem);
-	  return rv;
-	}
+      if ((l=atomic_read(&(to6_pkt[to6_jptr].len))))
+        {
+          switch (to6_pkt[to6_jptr].buff[1]&0xf0)
+            {
+            case 0x40:
+              break;
+            default:
+              {
+                mutex_unlock(&to6_sem);
+                rv=copy_to_user(buff,&go,sizeof(char));
+                return sizeof(char);
+              }
+            }
+          to6_pkt[to6_jptr].buff[0]=DIRECT_INCOMING;
+          rv=copy_to_user(buff,(unsigned char *)(to6_pkt[to6_jptr].buff),l);
+          atomic_set(&(to6_pkt[to6_jptr].len),0);
+          to6_jptr++;
+          if (to6_jptr==MAX_PACKET_BUFFERS)
+            to6_jptr=0;
+          mutex_unlock(&to6_sem);
+          return l;
+        }
     }
+  rv=copy_to_user(buff,&go,sizeof(char));
   mutex_unlock(&to6_sem);
-  return copy_to_user(buff,&go,sizeof(char));
+  return sizeof(char);
 }
 
 struct file_operations to4_fops={.read=to4_dirt,};
