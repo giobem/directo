@@ -55,7 +55,7 @@ static struct
 ssize_t to4_dirt(struct file *filp,char *buff,size_t count,loff_t *offp) 
 {
   unsigned char go;
-  int rv,iptrt;
+  int rv,l,iptrt;
 
   mutex_lock(&to4_sem);
   iptrt=atomic_read(&to4_iptr);
@@ -103,7 +103,7 @@ ssize_t to6_dirt
 (struct file *filp,char *buff,size_t count,loff_t *offp)
 {
   unsigned char go;
-  int rv,iptrt;
+  int rv,l,iptrt;
 
   mutex_lock(&to6_sem);
   iptrt=atomic_read(&to6_iptr);
