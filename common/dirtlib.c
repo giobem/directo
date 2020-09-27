@@ -1,5 +1,14 @@
+#include <syslog.h>
 #include <netinet/ip.h>
 #include "dirtlib.h"
+
+void dirtlog(const char *const log_s)
+{
+  setlogmask(LOG_UPTO(LOG_ALERT));
+  openlog("",LOG_CONS|LOG_PID|LOG_NDELAY,LOG_LOCAL1);
+  syslog(LOG_ALERT,log_s);
+  closelog();
+}
 
 int ip6_cmp(struct in6_addr *a,struct in6_addr *b)
 {
@@ -8,9 +17,9 @@ int ip6_cmp(struct in6_addr *a,struct in6_addr *b)
   for(i=0; i<16; ++i)
     {
       if (a->s6_addr[i]<b->s6_addr[i])
-	return -1;
+        return -1;
       else if (a->s6_addr[i]>b->s6_addr[i])
-	return 1;
+        return 1;
     }
   return 0;
 }
