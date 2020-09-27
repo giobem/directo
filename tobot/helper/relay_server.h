@@ -3,7 +3,9 @@
 
 unsigned char *buffer;
 
+void sendto4_tofrag(unsigned char *,int,uint8_t);
 void sendto4(unsigned char *const,int,uint8_t);
+void sendto6_tofrag(unsigned char *,int,uint8_t);
 void sendto6(unsigned char *const,int,uint8_t);
 void set_host(char *,char *);
 int setsocket();
