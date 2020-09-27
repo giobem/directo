@@ -9,6 +9,11 @@ void sendto4tcp
  unsigned char *,unsigned char *,struct ip6_hdr *,struct iphdr *,
  struct sockaddr_in,int,uint8_t
  );
+void sendto6tcp_fragment
+(
+ unsigned char *,unsigned char *,struct ip6_hdr *,struct ip6_hdr *,
+ struct sockaddr_in6,int,uint8_t
+ );
 void sendto6tcp
 (
  unsigned char *,unsigned char *,struct iphdr *,struct ip6_hdr *,
