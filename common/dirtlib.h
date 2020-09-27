@@ -20,6 +20,7 @@ struct direct_footer
   uint8_t sp; //Must be zero.
 };
 
+void dirtlog(const char *const);
 unsigned short csum(unsigned short *,int);
 int chk_in4_msg(unsigned char *,int);
 int chk_in6_msg(unsigned char *,int);
