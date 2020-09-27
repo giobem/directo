@@ -1,11 +1,17 @@
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include "../../common/dirtlib.h"
+#include "directobot.h"
+#include "icmp.h"
 #include "relay_server.h"
 #include "state_table.h"
 #include "tcpudp.h"
+
+#define MAX_FRAG_DIM 1112
 
 typedef uint64_t u64;
 
@@ -25,6 +31,10 @@ struct in6_addr ip6src;
 struct sockaddr_in s_in;
 struct sockaddr_in6 s6_in;
 
+void sendto4_tofrag(unsigned char *pkt,int pkt_len,uint8_t flags)
+{
+}
+
 void sendto4(unsigned char *const pkt,int pkt_len,uint8_t flags)
 {
   struct direct_footer *drtftr;
@@ -40,28 +50,28 @@ void sendto4(unsigned char *const pkt,int pkt_len,uint8_t flags)
     {
     case RELAY_TO4DR:
       {
-	drtftr=
-	  (struct direct_footer *)(pkt+pkt_len-sizeof(struct direct_footer));
-	memcpy
-	  (
-	   &(hdr4->daddr),
-	   (struct in_addr *)
-	   (((unsigned char *)drtftr)-sizeof(struct in_addr)),
-	   sizeof(struct in_addr)
-	   );
-	memcpy
-	  (
-	   &s_in.sin_addr,
-	   (struct in_addr *)
-	   (((unsigned char *)drtftr)-sizeof(struct in_addr)),
-	   sizeof(struct in_addr)
-	   );	
-	break;
+        drtftr=
+          (struct direct_footer *)(pkt+pkt_len-sizeof(struct direct_footer));
+        memcpy
+          (
+           &(hdr4->daddr),
+           (struct in_addr *)
+           (((unsigned char *)drtftr)-sizeof(struct in_addr)),
+           sizeof(struct in_addr)
+           );
+        memcpy
+          (
+           &s_in.sin_addr,
+           (struct in_addr *)
+           (((unsigned char *)drtftr)-sizeof(struct in_addr)),
+           sizeof(struct in_addr)
+           );
+        break;
       }
     default:
       {
-	drtftr=NULL;
-	break;
+        drtftr=NULL;
+        break;
       }
     }
   hdr4->ihl=5;
@@ -80,16 +90,133 @@ void sendto4(unsigned char *const pkt,int pkt_len,uint8_t flags)
       }
     case IPPROTO_UDP:
       {
-	sendto4udp(pkt,buffer,hdr6,hdr4,s_in,raws_udp,flags);
+        sendto4udp(pkt,buffer,hdr6,hdr4,s_in,raws_udp,flags);
         break;
       }
     case IPPROTO_ICMPV6:
       {
-	sendto4icmp(pkt,buffer,hdr6,hdr4,s_in,raws_icmp,flags);
+        sendto4icmp(pkt,buffer,hdr6,hdr4,s_in,raws_icmp,flags);
         break;
       }
     default:
       return;
+    }
+}
+
+void sendto6_tofrag(unsigned char *pkt,int pkt_len,uint8_t flags)
+{
+  struct direct_footer *drtftr;
+  struct iphdr *hdr4;
+  struct ip6_frag *hdr6_frag_hdr;
+  struct ip6_hdr *hdr6,*hdr6_full,*hdr6_frag;
+  int orig_plen,offset_plen=0;
+  unsigned char buffer2[DIRECTOBOT_BUFFER_SIZE];
+
+  hdr6=(struct ip6_hdr *)buffer;
+  drtftr=(struct direct_footer *)(pkt+pkt_len-sizeof(struct direct_footer));
+  hdr4=(struct iphdr *)pkt;
+  hdr6->ip6_ctlun.ip6_un1.ip6_un1_hlim=hdr4->ttl;
+  hdr6->ip6_ctlun.ip6_un2_vfc=hdr4->tos;
+  hdr6->ip6_ctlun.ip6_un1.ip6_un1_flow=htonl(0x60000000);
+  memcpy(&(hdr6->ip6_src),&ip6src,sizeof(struct in6_addr));
+  memcpy
+    (
+     &(hdr6->ip6_dst),
+     (struct in6_addr *)(((unsigned char *)drtftr)-sizeof(struct in6_addr)),
+     sizeof(struct in6_addr)
+     );
+  memcpy
+    (
+     &s6_in.sin6_addr,
+     (struct in6_addr *)(((unsigned char *)drtftr)-sizeof(struct in6_addr)),
+     sizeof(struct in6_addr)
+     );
+  switch (hdr4->protocol)
+    {
+    case IPPROTO_TCP:
+      {
+        sendto6tcp(pkt,buffer,hdr4,hdr6,s6_in,raws_tcp6,flags);
+        break;
+      }
+    case IPPROTO_UDP:
+      {
+        sendto6udp(pkt,buffer,hdr4,hdr6,s6_in,raws_udp6,flags);
+        break;
+      }
+    case IPPROTO_ICMP:
+      {
+        sendto6icmp(pkt,buffer,hdr4,hdr6,s6_in,raws_icmp6,flags);
+        break;
+      }
+    default: return;
+    }
+  hdr6_full=hdr6;
+  hdr6_frag=(struct ip6_hdr *)buffer2;
+  orig_plen=ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen);
+  memcpy(buffer2,buffer,sizeof(struct ip6_hdr));
+  hdr6_frag_hdr=(struct ip6_frag *)(buffer2+sizeof(struct ip6_hdr));
+  hdr6_full->ip6_ctlun.ip6_un1.ip6_un1_plen=
+    htons(MAX_FRAG_DIM+sizeof(struct ip6_frag));
+  hdr6_frag_hdr->ip6f_nxt=hdr6_full->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+  hdr6_frag->ip6_ctlun.ip6_un1.ip6_un1_nxt=0x2C;
+  hdr6_frag_hdr->ip6f_reserved=0x0;
+  hdr6_frag_hdr->ip6f_offlg=htons(((offset_plen/8)<<3)|0x1);
+  hdr6_frag_hdr->ip6f_ident=htonl((uint32_t)rand());
+  offset_plen+=MAX_FRAG_DIM;
+  while (offset_plen<orig_plen)
+    {
+      switch (hdr4->protocol)
+        {
+        case IPPROTO_TCP:
+          {
+            sendto6tcp_fragment
+              (buffer,buffer2,hdr6_full,hdr6_frag,s6_in,raws_tcp6,flags);
+            break;
+          }
+        case IPPROTO_UDP:
+          {
+            sendto6udp(pkt,buffer,hdr4,hdr6,s6_in,raws_udp6,flags);
+            break;
+          }
+        case IPPROTO_ICMP:
+          {
+            sendto6icmp(pkt,buffer,hdr4,hdr6,s6_in,raws_icmp6,flags);
+            break;
+          }
+        default: return;
+        }
+      memcpy
+        (
+         buffer+sizeof(struct ip6_hdr),
+         buffer+sizeof(struct ip6_hdr)+offset_plen,
+         MAX_FRAG_DIM
+         );
+      hdr6_frag_hdr->ip6f_offlg=htons(((offset_plen/0x8)<<3)|0x1);
+      offset_plen+=MAX_FRAG_DIM;
+    }
+  offset_plen-=MAX_FRAG_DIM;
+  hdr6_full->ip6_ctlun.ip6_un1.ip6_un1_plen=
+    htons((orig_plen-offset_plen)+sizeof(struct ip6_frag));
+  hdr6_frag_hdr->ip6f_offlg=htons((offset_plen/0x8)<<3);
+  switch (hdr4->protocol)
+    {
+    case IPPROTO_TCP:
+      {
+        sendto6tcp_fragment
+          (buffer,buffer2,hdr6_full,hdr6_frag,s6_in,raws_tcp6,flags);
+        break;
+      }
+    case IPPROTO_UDP:
+      {
+        sendto6udp(pkt,buffer,hdr4,hdr6,s6_in,raws_udp6,flags);
+        break;
+      }
+    case IPPROTO_ICMP:
+      {
+        sendto6icmp(pkt,buffer,hdr4,hdr6,s6_in,raws_icmp6,flags);
+        break;
+      }
+    default: return;
     }
 }
 
@@ -128,13 +255,13 @@ void sendto6(unsigned char *pkt,int pkt_len,uint8_t flags)
       }
     case IPPROTO_UDP:
       {
-	sendto6udp(pkt,buffer,hdr4,hdr6,s6_in,raws_udp6,flags);
-	break;
+        sendto6udp(pkt,buffer,hdr4,hdr6,s6_in,raws_udp6,flags);
+        break;
       }
     case IPPROTO_ICMP:
       {
-	sendto6icmp(pkt,buffer,hdr4,hdr6,s6_in,raws_icmp6,flags);
-	break;
+        sendto6icmp(pkt,buffer,hdr4,hdr6,s6_in,raws_icmp6,flags);
+        break;
       }
     default: return;
     }
