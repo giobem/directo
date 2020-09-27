@@ -1,3 +1,5 @@
+#include <errno.h>
+
 #include <string.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
@@ -5,6 +7,33 @@
 #include "tcpudp.h"
 #include "../../common/dirtlib.h"
 #include "../../common/tcpudplib.h"
+
+void send_to_relay_tcp_fragment
+(
+ unsigned char *pkt,unsigned char *buffer,struct iphdr *hdr4_full,
+ struct iphdr *hdr4_frag,struct sockaddr_in s_in,int raws_tcp
+ )
+{
+  unsigned char *hdr4_frag_data,*hdr4_full_data,*ipv6_footer_data;
+  struct direct_footer *drtftr;
+
+  hdr4_frag_data=buffer+sizeof(struct iphdr);
+  hdr4_full_data=pkt+sizeof(struct iphdr);
+  memcpy
+    (
+     hdr4_frag_data,hdr4_full_data,
+     ntohs(hdr4_full->tot_len)-sizeof(struct iphdr)
+     );
+  hdr4_frag->tot_len=hdr4_full->tot_len;
+  hdr4_frag->frag_off=hdr4_full->frag_off;
+  hdr4_frag->protocol=IPPROTO_TCP;
+  hdr4_frag->check=csum((unsigned short *)pkt,ntohs(hdr4_frag->tot_len));
+  sendto
+    (
+     raws_tcp,buffer,ntohs(hdr4_frag->tot_len),0,(struct sockaddr *)&(s_in),
+     sizeof(struct sockaddr_in)
+     );
+}
 
 void send_to_relay_tcp
 (
@@ -21,8 +50,8 @@ void send_to_relay_tcp
     (unsigned char *)(pkt+sizeof(struct ip6_hdr)+sizeof(struct tcphdr));
   tcp6_data_len=
     ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-sizeof(struct tcphdr);
-  if (tcp6_data_len>MAX_TCP_PAYLOAD_LEN)
-    return;
+  //  if (tcp6_data_len>MAX_TCP_PAYLOAD_LEN)
+  //    return;
   tcph=(struct tcphdr *)(buffer+sizeof(struct iphdr));
   tcp6h=(struct tcphdr *)(pkt+sizeof(struct ip6_hdr));
   memcpy(tcph,tcp6h,sizeof(struct tcphdr));
@@ -57,11 +86,12 @@ void send_to_relay_tcp
      (ntohs(hdr4->tot_len)-sizeof(struct iphdr))
      );
   hdr4->check=csum((unsigned short *)pkt,ntohs(hdr4->tot_len));
-  sendto
-    (
-     raws_tcp,buffer,ntohs(hdr4->tot_len),0,(struct sockaddr *)&(s_in),
-     sizeof(struct sockaddr_in)
-     );
+  if (tcp6_data_len<=MAX_TCP_PAYLOAD_LEN)
+    sendto
+      (
+       raws_tcp,buffer,ntohs(hdr4->tot_len),0,(struct sockaddr *)&(s_in),
+       sizeof(struct sockaddr_in)
+       );
 }
 
 void rcv_from_relay_tcp
@@ -80,7 +110,7 @@ void rcv_from_relay_tcp
     ntohs(hdr4->tot_len)-sizeof(struct tcphdr)-sizeof(struct iphdr)-
     sizeof(struct in6_addr)-sizeof(struct direct_footer);
   if (tcp4_data_len>MAX_TCP_PAYLOAD_LEN)
-    return;
+    {dirtlog("tcp4 too large");return;}
   tcp6h=(struct tcphdr *)(buffer+sizeof(struct ip6_hdr));
   tcp4h=(struct tcphdr *)(pkt+sizeof(struct iphdr));
   memcpy(tcp6h,tcp4h,sizeof(struct tcphdr));
