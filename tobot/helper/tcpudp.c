@@ -6,6 +6,7 @@
 #include "../../common/dirtlib.h"
 #include "../../common/tcpudplib.h"
 #include "directobot.h"
+#include "state_table.h"
 #include "tcpudp.h"
 
 void sendto4tcp
@@ -33,9 +34,9 @@ void sendto4tcp
     {
     case RELAY_TO4DR:
       {
-	tcp6_data_len=
-	  ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-sizeof(struct tcphdr)-
-	  sizeof(struct in_addr)-sizeof(struct direct_footer);
+        tcp6_data_len=
+          ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-sizeof(struct tcphdr)-
+          sizeof(struct in_addr)-sizeof(struct direct_footer);
         if (
             tcp6_data_len+sizeof(struct in6_addr)+sizeof(struct direct_footer)
             >
@@ -49,35 +50,35 @@ void sendto4tcp
         tcp6_data_len=
           ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-sizeof(struct tcphdr)-
           sizeof(struct in_addr)-sizeof(struct direct_footer);
-	if (tcp6_data_len>MAX_TCP_PAYLOAD_LEN)
+        if (tcp6_data_len>MAX_TCP_PAYLOAD_LEN)
           return;
         break;
       }
     case NO_CODE:
       {
-	if 
-	  (
-	   (
-	    ip4dst=
-	    stget(0,tcp6h->dest,tcp6h->source,&(hdr6->ip6_src),1,IPPROTO_TCP,0)
-	    )
-	   )
-	  {
-	    hdr4->daddr=ip4dst;
-	    s_in.sin_addr=*((struct in_addr *)&ip4dst);
-	   }
-	else
-	  return;
-	tcp6_data_len=
-	  ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-sizeof(struct tcphdr);
+        if
+          (
+           (
+            ip4dst=
+            stget(0,tcp6h->dest,tcp6h->source,&(hdr6->ip6_src),1,IPPROTO_TCP,0)
+            )
+           )
+          {
+            hdr4->daddr=ip4dst;
+            s_in.sin_addr=*((struct in_addr *)&ip4dst);
+           }
+        else
+          return;
+        tcp6_data_len=
+          ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-sizeof(struct tcphdr);
         if (
             tcp6_data_len+sizeof(struct in_addr)+sizeof(struct direct_footer)
             >
             MAX_TCP_PAYLOAD_LEN
             )
           return;
-	flags=RELAY_TO4DR;
-	break;
+        flags=RELAY_TO4DR;
+        break;
       }
     default:
       return;
@@ -89,7 +90,7 @@ void sendto4tcp
     {
     case RELAY_TO4DR:
       {
-	ipv6_footer=tcp4_data+tcp6_data_len;
+        ipv6_footer=tcp4_data+tcp6_data_len;
         memcpy(ipv6_footer,&(hdr6->ip6_src),sizeof(struct in6_addr));
         drtftr=
           (struct direct_footer *)(ipv6_footer+sizeof(struct in6_addr));
@@ -112,8 +113,8 @@ void sendto4tcp
       {
         hdr4->tot_len=
           htons(tcp6_data_len+sizeof(struct tcphdr)+sizeof(struct iphdr));
-	ststore
-	  (hdr4->daddr,tcp6h->dest,tcp6h->source,&(hdr6->ip6_src),IPPROTO_TCP);
+        ststore
+          (hdr4->daddr,tcp6h->dest,tcp6h->source,&(hdr6->ip6_src),IPPROTO_TCP);
         break;
       }
     }
@@ -131,6 +132,38 @@ void sendto4tcp
     (
      raws_tcp,buffer,ntohs(hdr4->tot_len),0,(struct sockaddr *)&(s_in),
      sizeof(struct sockaddr_in)
+     );
+}
+
+void sendto6tcp_fragment
+(
+ unsigned char *pkt,unsigned char *buffer,struct ip6_hdr *hdr6_full,
+ struct ip6_hdr *hdr6_frag,struct sockaddr_in6 s6_in,int raws_tcp6,
+ uint8_t flags
+ )
+{
+  unsigned char *hdr6_frag_data,*hdr6_full_data;
+  struct ip6_frag *hdr6_frag_hdr;
+
+  hdr6_frag_data=buffer+sizeof(struct ip6_hdr)+sizeof(struct ip6_frag);
+  hdr6_full_data=pkt+sizeof(struct ip6_hdr);
+  hdr6_frag_hdr=(struct ip6_frag *)(buffer+sizeof(struct ip6_hdr));
+  memcpy
+    (
+     hdr6_frag_data,hdr6_full_data,
+     ntohs(hdr6_full->ip6_ctlun.ip6_un1.ip6_un1_plen)
+     );
+  hdr6_frag->ip6_ctlun.ip6_un1.ip6_un1_plen=
+    hdr6_full->ip6_ctlun.ip6_un1.ip6_un1_plen;
+  int a;
+  a=sendto
+    (
+     raws_tcp6,buffer,
+     ntohs(hdr6_frag->ip6_ctlun.ip6_un1.ip6_un1_plen)+sizeof(struct ip6_hdr)
+     +sizeof(struct ip6_frag),
+     0,
+     (struct sockaddr *)&(s6_in),
+     sizeof(struct sockaddr_in6)
      );
 }
 
@@ -155,24 +188,16 @@ void sendto6tcp
     {
     case RELAY_TO6DR:
       {
-	tcp4_data_len=
-	  ntohs(hdr4->tot_len)-sizeof(struct tcphdr)-sizeof(struct iphdr)-
-	  sizeof(struct in6_addr)-sizeof(struct direct_footer);
-        if (
-	    tcp4_data_len+sizeof(struct in_addr)+sizeof(struct direct_footer)
-	    >
-	    MAX_TCP_PAYLOAD_LEN
-	    )
-	  return;
-	break;
+        tcp4_data_len=
+          ntohs(hdr4->tot_len)-sizeof(struct tcphdr)-sizeof(struct iphdr)-
+          sizeof(struct in6_addr)-sizeof(struct direct_footer);
+        break;
       }
     case RELAY_TO6:
       {
         tcp4_data_len=
           ntohs(hdr4->tot_len)-sizeof(struct tcphdr)-sizeof(struct iphdr)-
           sizeof(struct in6_addr)-sizeof(struct direct_footer);
-        if (tcp4_data_len>MAX_TCP_PAYLOAD_LEN)
-          return;
         break;
       }
     case NO_CODE:
@@ -195,8 +220,8 @@ void sendto6tcp
          tcp4_data_len+sizeof(struct tcphdr)
          );
       drtftr->len=
-	htons
-	(
+        htons
+        (
          ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-
          (sizeof(struct in_addr)+sizeof(struct direct_footer))
          );
@@ -207,7 +232,7 @@ void sendto6tcp
       hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen=
         htons(tcp4_data_len+sizeof(struct tcphdr));
       ststore
-	(hdr4->saddr,tcp4h->source,tcp4h->dest,&(hdr6->ip6_dst),IPPROTO_TCP);
+        (hdr4->saddr,tcp4h->source,tcp4h->dest,&(hdr6->ip6_dst),IPPROTO_TCP);
     }
   hdr6->ip6_ctlun.ip6_un1.ip6_un1_nxt=IPPROTO_TCP;
   tcp6h->check=0;
@@ -217,7 +242,8 @@ void sendto6tcp
      &(hdr6->ip6_src),&(hdr6->ip6_dst),IPPROTO_TCP,(void *)tcp6h,
      ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)
      );
-  sendto
+  if (ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)<=MAX_TCP_PAYLOAD_LEN)
+    sendto
     (
      raws_tcp6,buffer,
      ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)+sizeof(struct ip6_hdr),
@@ -253,18 +279,18 @@ void sendto4udp
         if
           (
            (
-	    ip4dst=
-	    stget(0,udp6h->dest,udp6h->source,&(hdr6->ip6_src),1,IPPROTO_UDP,0)
-	    )
+            ip4dst=
+            stget(0,udp6h->dest,udp6h->source,&(hdr6->ip6_src),1,IPPROTO_UDP,0)
+            )
            )
           {
             hdr4->daddr=ip4dst;
             s_in.sin_addr=*((struct in_addr *)&ip4dst);
           }
-	else
-	  return;
-	udp6_data_len+=sizeof(struct direct_footer)+sizeof(struct in_addr);
-	flags=RELAY_TO4DR;
+        else
+          return;
+        udp6_data_len+=sizeof(struct direct_footer)+sizeof(struct in_addr);
+        flags=RELAY_TO4DR;
       }
     case RELAY_TO4DR:
       {
@@ -285,40 +311,40 @@ void sendto4udp
     {
     case RELAY_TO4DR:
       {
-	ipv6_footer=udp4_data+udp6_data_len;
-	memcpy(ipv6_footer,&(hdr6->ip6_src),sizeof(struct in6_addr));
-	drtftr=
-	  (struct direct_footer *)(ipv6_footer+sizeof(struct in6_addr));
-	hdr4->tot_len=
-	  htons
-	  (
-	   sizeof(struct direct_footer)+sizeof(struct in6_addr)+
-	   udp6_data_len+sizeof(struct udphdr)+sizeof(struct iphdr)
-	   );
-	drtftr->len=
-	  htons
-	  (
-	   ntohs(hdr4->tot_len)-
-	   (sizeof(struct in6_addr)+sizeof(struct direct_footer))
-	   );
-	drtftr->code=RELAY_TO6;
-	udph->len=
-	  htons
-	  (
-	   sizeof(struct udphdr)+udp6_data_len+
-	   sizeof(struct direct_footer)+
-	   sizeof(struct in6_addr)
-	   );
-	break;
+        ipv6_footer=udp4_data+udp6_data_len;
+        memcpy(ipv6_footer,&(hdr6->ip6_src),sizeof(struct in6_addr));
+        drtftr=
+          (struct direct_footer *)(ipv6_footer+sizeof(struct in6_addr));
+        hdr4->tot_len=
+          htons
+          (
+           sizeof(struct direct_footer)+sizeof(struct in6_addr)+
+           udp6_data_len+sizeof(struct udphdr)+sizeof(struct iphdr)
+           );
+        drtftr->len=
+          htons
+          (
+           ntohs(hdr4->tot_len)-
+           (sizeof(struct in6_addr)+sizeof(struct direct_footer))
+           );
+        drtftr->code=RELAY_TO6;
+        udph->len=
+          htons
+          (
+           sizeof(struct udphdr)+udp6_data_len+
+           sizeof(struct direct_footer)+
+           sizeof(struct in6_addr)
+           );
+        break;
       }
     default:
       {
-	hdr4->tot_len=
-	  htons(udp6_data_len+sizeof(struct udphdr)+sizeof(struct iphdr));
-	udph->len=htons(sizeof(struct udphdr)+udp6_data_len);
-	ststore
-	  (hdr4->daddr,udp6h->dest,udp6h->source,&(hdr6->ip6_src),IPPROTO_UDP);
-	break;
+        hdr4->tot_len=
+          htons(udp6_data_len+sizeof(struct udphdr)+sizeof(struct iphdr));
+        udph->len=htons(sizeof(struct udphdr)+udp6_data_len);
+        ststore
+          (hdr4->daddr,udp6h->dest,udp6h->source,&(hdr6->ip6_src),IPPROTO_UDP);
+        break;
       }
     }
   hdr4->protocol=IPPROTO_UDP;
@@ -358,10 +384,10 @@ void sendto6udp
     sizeof(struct in6_addr)-sizeof(struct direct_footer);
   if (flags==RELAY_TO6DR)
     if (
-	udp4_data_len+sizeof(struct in_addr)+sizeof(struct direct_footer)
-	>
-	MAX_UDP_PAYLOAD_LEN
-	)
+        udp4_data_len+sizeof(struct in_addr)+sizeof(struct direct_footer)
+        >
+        MAX_UDP_PAYLOAD_LEN
+        )
       return;
   udp6h=(struct udphdr *)(buffer+sizeof(struct ip6_hdr));
   udp4h=(struct udphdr *)(pkt+sizeof(struct iphdr));
@@ -374,35 +400,35 @@ void sendto6udp
       ipv4_footer=udp6_data+udp4_data_len;
       memcpy(ipv4_footer,&(hdr4->saddr),sizeof(struct in_addr));
       drtftr=
-	(struct direct_footer *)(ipv4_footer+sizeof(struct in_addr));
+        (struct direct_footer *)(ipv4_footer+sizeof(struct in_addr));
       hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen=
-	htons
-	(
-	 sizeof(struct direct_footer)+sizeof(struct in_addr)+
-	 udp4_data_len+sizeof(struct udphdr)
-	 );
+        htons
+        (
+         sizeof(struct direct_footer)+sizeof(struct in_addr)+
+         udp4_data_len+sizeof(struct udphdr)
+         );
       drtftr->len=
-	htons
-	(
-	 ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-
-	 (sizeof(struct in_addr)+sizeof(struct direct_footer))
-	 );
+        htons
+        (
+         ntohs(hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen)-
+         (sizeof(struct in_addr)+sizeof(struct direct_footer))
+         );
       drtftr->code=RELAY_TO4;
       udp6h->len=
-	htons
-	(
-	 sizeof(struct udphdr)+udp4_data_len+
-	 sizeof(struct direct_footer)+
-	 sizeof(struct in_addr)
-	 );
+        htons
+        (
+         sizeof(struct udphdr)+udp4_data_len+
+         sizeof(struct direct_footer)+
+         sizeof(struct in_addr)
+         );
     }
   else
     {
       hdr6->ip6_ctlun.ip6_un1.ip6_un1_plen=
-	htons(udp4_data_len+sizeof(struct udphdr));
+        htons(udp4_data_len+sizeof(struct udphdr));
       udp6h->len=htons(sizeof(struct udphdr)+udp4_data_len);
       ststore
-	(hdr4->saddr,udp4h->source,udp4h->dest,&(hdr6->ip6_dst),IPPROTO_UDP);
+        (hdr4->saddr,udp4h->source,udp4h->dest,&(hdr6->ip6_dst),IPPROTO_UDP);
     }
   hdr6->ip6_ctlun.ip6_un1.ip6_un1_nxt=IPPROTO_UDP;
   udp6h->check=0;
