@@ -6,6 +6,11 @@
 
 #define MAX_INTERNET_WINDOW_SIZE 1444
 
+void send_to_relay_tcp_fragment
+(
+ unsigned char *,unsigned char *,struct iphdr *,struct iphdr *,
+ struct sockaddr_in,int
+ );
 void send_to_relay_tcp
 (
  unsigned char *,unsigned char *,struct ip6_hdr *,struct iphdr *,
