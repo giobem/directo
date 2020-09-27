@@ -1,3 +1,4 @@
+#include <asm/siginfo.h>
 #include <linux/cdev.h>
 #include <linux/icmp.h>
 #include <linux/icmpv6.h>
@@ -8,6 +9,7 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
+#include <linux/version.h>
 #include <net/ndisc.h>
 
 #define DESCRIPTION "Directo6"
@@ -15,7 +17,7 @@
 #define MODULE_VERS "0.1"
 #define MODULE_NAME "directo6"
 
-#define NIC "enp0s8"
+#define NIC "eth0"
 #define MAX_INCOMING_PKT_SIZE 1537
 #define MAX_OUTGOING_PKT_SIZE 1537
 
@@ -23,19 +25,25 @@
 #define DIRECT_TO_KERNEL 8198
 #define DIRECT_INCOMING 0
 #define DIRECT_OUTGOING 1
+#define DIRECT_OUTGOING_TO_FRAG 4
 #define MIN_CONF 1
-#define RELAY4CONF 34
+#define RELAY4CONF   34
 #define GO 253
 #define EXITNOW 254
-#define MAX_PACKET_BUFFERS 0x800
-#define MAX_PACKET_BUFFER_SIZE 0x600
+#define MAX_PACKET_BUFFERS 0x8
+#define MAX_PACKET_BUFFER_SIZE 0x10001
+#define MAX_HELPER_READ_WRITE_RETRY MAX_PACKET_BUFFERS
 
 MODULE_AUTHOR(AUTHOR);
 MODULE_DESCRIPTION(DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static int RUN,to4_jptr,to6_jptr,to4_dev_major,to6_dev_major,exitnow=0;
+static int RUN,to4_jptr,to6_jptr,to4_dev_major,to6_dev_major,exitnow=0,wkup4=0,
+  wkup6=0;
 static __u32 raddr4;
+static atomic_t to4_iptr,to6_iptr;
+static DECLARE_WAIT_QUEUE_HEAD(to4_queue);
+static DECLARE_WAIT_QUEUE_HEAD(to6_queue);
 static struct in6_addr saddr6;
 static struct socket *clientsocket=NULL;
 static struct mutex to4_sem,to6_sem;
@@ -44,24 +52,24 @@ static struct sockaddr_in to_helper;
 static struct class *dev_class;
 static struct device *to4_dirt_dev,*to6_dirt_dev;
 struct cdev *kernel_cdev;
-static atomic_t to4_iptr,to6_iptr;
 
 static struct
 {
   unsigned char buff[MAX_PACKET_BUFFER_SIZE];
   atomic_t len;
-} to4_pkt[MAX_PACKET_BUFFERS],to6_pkt[MAX_PACKET_BUFFERS];
+} to4_pkt[MAX_PACKET_BUFFERS+1],to6_pkt[MAX_PACKET_BUFFERS+1];
 
-ssize_t to4_dirt(struct file *filp,char *buff,size_t count,loff_t *offp) 
+ssize_t to4_dirt(struct file *filp,char *buff,size_t count,loff_t *offp)
 {
-  unsigned char go;
+  unsigned char go=GO;
   int rv,l,iptrt;
 
+  mutex_unlock(&to4_sem);
   mutex_lock(&to4_sem);
+  wait_event_interruptible(to4_queue,wkup4>0);
+  wkup4--;
   iptrt=atomic_read(&to4_iptr);
-  if (!exitnow)
-    go=GO;
-  else
+  if (exitnow)
     {
       mutex_unlock(&to4_sem);
       mutex_unlock(&to6_sem);
@@ -71,6 +79,8 @@ ssize_t to4_dirt(struct file *filp,char *buff,size_t count,loff_t *offp)
     }
   if (to4_jptr!=iptrt)
     {
+      if (iptrt==to4_jptr-1||((iptrt==0)&&(to4_jptr==MAX_PACKET_BUFFERS-1)))
+        printk(KERN_ALERT "Buffer full!");
       if ((l=atomic_read(&(to4_pkt[to4_jptr].len))))
         {
           switch (to4_pkt[to4_jptr].buff[1]&0xf0)
@@ -79,37 +89,38 @@ ssize_t to4_dirt(struct file *filp,char *buff,size_t count,loff_t *offp)
               break;
             default:
               {
-                mutex_unlock(&to4_sem);
                 rv=copy_to_user(buff,&go,sizeof(char));
                 return sizeof(char);
               }
             }
-          to4_pkt[to4_jptr].buff[0]=DIRECT_OUTGOING;
+          if (l>MAX_OUTGOING_PKT_SIZE)
+            to4_pkt[to4_jptr].buff[0]=DIRECT_OUTGOING_TO_FRAG;
+          else
+            to4_pkt[to4_jptr].buff[0]=DIRECT_OUTGOING;
           rv=copy_to_user(buff,(unsigned char *)(to4_pkt[to4_jptr].buff),l);
           atomic_set(&(to4_pkt[to4_jptr].len),0);
           to4_jptr++;
           if (to4_jptr==MAX_PACKET_BUFFERS)
             to4_jptr=0;
-          mutex_unlock(&to4_sem);
           return l;
         }
     }
   rv=copy_to_user(buff,&go,sizeof(char));
-  mutex_unlock(&to4_sem);
   return sizeof(char);
 }
 
 ssize_t to6_dirt
 (struct file *filp,char *buff,size_t count,loff_t *offp)
 {
-  unsigned char go;
+  unsigned char go=GO;
   int rv,l,iptrt;
 
+  mutex_unlock(&to6_sem);
   mutex_lock(&to6_sem);
+  wait_event_interruptible(to6_queue,wkup6>0);
+  wkup6--;
   iptrt=atomic_read(&to6_iptr);
-  if (!exitnow)
-    go=GO;
-  else
+  if (exitnow)
     {
       mutex_unlock(&to4_sem);
       mutex_unlock(&to6_sem);
@@ -119,6 +130,8 @@ ssize_t to6_dirt
     }
   if (to6_jptr!=iptrt)
     {
+      if (iptrt==to6_jptr-1||((iptrt==0)&&(to6_jptr==MAX_PACKET_BUFFERS-1)))
+        printk(KERN_ALERT "Buffer full!");
       if ((l=atomic_read(&(to6_pkt[to6_jptr].len))))
         {
           switch (to6_pkt[to6_jptr].buff[1]&0xf0)
@@ -127,7 +140,6 @@ ssize_t to6_dirt
               break;
             default:
               {
-                mutex_unlock(&to6_sem);
                 rv=copy_to_user(buff,&go,sizeof(char));
                 return sizeof(char);
               }
@@ -138,12 +150,10 @@ ssize_t to6_dirt
           to6_jptr++;
           if (to6_jptr==MAX_PACKET_BUFFERS)
             to6_jptr=0;
-          mutex_unlock(&to6_sem);
           return l;
         }
     }
   rv=copy_to_user(buff,&go,sizeof(char));
-  mutex_unlock(&to6_sem);
   return sizeof(char);
 }
 
@@ -160,14 +170,14 @@ void load_conf(struct sk_buff *skb,void *transport_hdr)
     {
     case RELAY4CONF:
       {
-	if (!host_configured)
-	  {
-	    raddr4=*((__u32 *)(&(data[1])));
-	    memcpy(&saddr6,&(data[5]),sizeof(struct in6_addr));
-	    RUN++;
-	    host_configured++;
-	  }
-	break;
+        if (!host_configured)
+          {
+            raddr4=*((__u32 *)(&(data[1])));
+            memcpy(&saddr6,&(data[5]),sizeof(struct in6_addr));
+            RUN++;
+            host_configured++;
+          }
+        break;
       }
     default: break;
     }
@@ -177,7 +187,7 @@ void load_conf(struct sk_buff *skb,void *transport_hdr)
 unsigned int ipv4_handler_PRE
 (
  unsigned int hooknum,struct sk_buff *skb,const struct net_device *in,
- const struct net_device *out, int (*okfn)(struct sk_buff *)
+ const struct net_device *out,int (*okfn)(struct sk_buff *)
  )
 {
   struct icmphdr *icmp4;
@@ -192,74 +202,73 @@ unsigned int ipv4_handler_PRE
     case IPPROTO_ICMP:
       {
         if (RUN<MIN_CONF)
-	  return NF_ACCEPT;
-	else if (hdr4->saddr==raddr4)
+          return NF_ACCEPT;
+        else if (hdr4->saddr==raddr4)
           {
-	    icmp4=skb_header_pointer(skb,sizeof(struct iphdr),0,NULL);
-	    switch (icmp4->type)
-	      {
-	      case ICMP_ECHOREPLY:
-	      case ICMP_ECHO:
-		break;
-	      default:
-		return NF_ACCEPT;
-	      }
-	  }
-	else
-	  return NF_ACCEPT;
-	break;
+            icmp4=skb_header_pointer(skb,sizeof(struct iphdr),0,NULL);
+            switch (icmp4->type)
+              {
+              case ICMP_ECHOREPLY:
+              case ICMP_ECHO:
+                break;
+              default:
+                return NF_ACCEPT;
+              }
+          }
+        else
+          return NF_ACCEPT;
+        break;
       }
     case IPPROTO_UDP:
       {
-	if (RUN<MIN_CONF)
-	  {
-	    udp4=skb_header_pointer(skb,sizeof(struct iphdr),0,NULL);
-	    if
-	      (
-	       hdr4->saddr==0x100007f
-	       &&
-	       hdr4->daddr==0x100007f
-	       &&
-	       ntohs(udp4->dest)==DIRECT_TO_KERNEL
-	       )
-	      {
-		load_conf(skb,udp4);
-		return NF_STOLEN;
-	      }
-	    if (hdr4->saddr==raddr4)
-	      return NF_DROP;
-	  }
-	else if (hdr4->saddr==raddr4)
-	  break;
-	return NF_ACCEPT;
+        if (RUN<MIN_CONF)
+          {
+            udp4=skb_header_pointer(skb,sizeof(struct iphdr),0,NULL);
+            if
+              (
+               hdr4->saddr==0x100007f
+               &&
+               hdr4->daddr==0x100007f
+               &&
+               ntohs(udp4->dest)==DIRECT_TO_KERNEL
+               )
+              {
+                load_conf(skb,udp4);
+                return NF_STOLEN;
+              }
+            if (hdr4->saddr==raddr4)
+              return NF_DROP;
+          }
+        else if (hdr4->saddr==raddr4)
+          break;
+        return NF_ACCEPT;
       }
     case IPPROTO_TCP:
       {
         if (RUN<MIN_CONF)
-	  return NF_ACCEPT;
-	if (hdr4->saddr==raddr4)
-	  break;
+          return NF_ACCEPT;
+        if (hdr4->saddr==raddr4)
+          break;
         return NF_ACCEPT;
       }
     default:
       return NF_ACCEPT;
     }
-  if (sizeof(unsigned char)+ntohs(hdr4->tot_len)>MAX_INCOMING_PKT_SIZE)
-    return NF_DROP;
   if (atomic_read(&to6_iptr)>=MAX_PACKET_BUFFERS)
     atomic_set(&to6_iptr,0);
   iptrt=atomic_inc_return(&to6_iptr)-1;
   atomic_set(&(tot_len),sizeof(unsigned char)+ntohs(hdr4->tot_len));
   skb_copy_bits(skb,0,&(to6_pkt[iptrt].buff[1]),atomic_read(&(tot_len))-1);
   atomic_set(&(to6_pkt[iptrt].len),atomic_read(&(tot_len)));
-  kfree_skb(skb);
+  wkup6=MAX_HELPER_READ_WRITE_RETRY;
+  wake_up_interruptible(&to6_queue);
   return NF_STOLEN;
 }
 
 unsigned int ipv6_handler_LOCAL_OUT
 (
  unsigned int hooknum,struct sk_buff *skb,const struct net_device *in,
- const struct net_device *out, int (*okfn)(struct sk_buff *)
+ const struct net_device *out,int (*okfn)(struct sk_buff *)
  )
 {
   struct icmp6hdr *icmp6;
@@ -271,7 +280,7 @@ unsigned int ipv6_handler_LOCAL_OUT
     return NF_ACCEPT;
   hdr6=skb_header_pointer(skb,0,0,NULL);
   for (i=0; i<sizeof(struct in6_addr); i++)
-    if 
+    if
       (((unsigned char *)(&(hdr6->daddr)))[i]!=((unsigned char *)(&saddr6))[i])
       break;
   if (i==sizeof(struct in6_addr))
@@ -280,15 +289,15 @@ unsigned int ipv6_handler_LOCAL_OUT
     {
     case IPPROTO_ICMPV6:
       {
-	icmp6=skb_header_pointer(skb,sizeof(struct ipv6hdr),0,NULL);
-	switch (icmp6->icmp6_type)
-	  {
-	  case ICMPV6_ECHO_REQUEST:
-	    break;
-	  default:
-	    return NF_ACCEPT;
-	  }
-	break;
+        icmp6=skb_header_pointer(skb,sizeof(struct ipv6hdr),0,NULL);
+        switch (icmp6->icmp6_type)
+          {
+          case ICMPV6_ECHO_REQUEST:
+            break;
+          default:
+            return NF_ACCEPT;
+          }
+        break;
       }
     case IPPROTO_UDP:
       break;
@@ -297,13 +306,6 @@ unsigned int ipv6_handler_LOCAL_OUT
     default:
       return NF_ACCEPT;
     }
-  if 
-    (
-     sizeof(unsigned char)+sizeof(struct ipv6hdr)+ntohs(hdr6->payload_len)
-     >
-     MAX_OUTGOING_PKT_SIZE
-     )
-    return NF_DROP;
   if (atomic_read(&to4_iptr)>=MAX_PACKET_BUFFERS)
     atomic_set(&to4_iptr,0);
   iptrt=atomic_inc_return(&to4_iptr)-1;
@@ -314,7 +316,8 @@ unsigned int ipv6_handler_LOCAL_OUT
      );
   skb_copy_bits(skb,0,&(to4_pkt[iptrt].buff[1]),atomic_read(&(tot_len))-1);
   atomic_set(&(to4_pkt[iptrt].len),atomic_read(&(tot_len)));
-  kfree_skb(skb);
+  wkup4=MAX_HELPER_READ_WRITE_RETRY;
+  wake_up_interruptible(&to4_queue);
   return NF_STOLEN;
 }
 
@@ -324,23 +327,33 @@ void register_handlers(void)
   ipv4_PRE.pf=PF_INET;
   ipv4_PRE.hooknum=NF_INET_PRE_ROUTING;
   ipv4_PRE.priority=NF_IP_PRI_LAST;
-  nf_register_hook(&ipv4_PRE);
   ipv6_LOCAL_OUT.hook=(nf_hookfn *)ipv6_handler_LOCAL_OUT;
   ipv6_LOCAL_OUT.pf=PF_INET6;
   ipv6_LOCAL_OUT.hooknum=NF_INET_LOCAL_OUT;
   ipv6_LOCAL_OUT.priority=NF_IP6_PRI_FIRST;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
+  nf_register_net_hook(&init_net,&ipv4_PRE);
+  nf_register_net_hook(&init_net,&ipv6_LOCAL_OUT);
+#else
+  nf_register_hook(&ipv4_PRE);
   nf_register_hook(&ipv6_LOCAL_OUT);
+#endif
 }
 
 void unregister_handlers(void)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
+  nf_unregister_net_hook(&init_net,&ipv4_PRE);
+  nf_unregister_net_hook(&init_net,&ipv6_LOCAL_OUT);
+#else
   nf_unregister_hook(&ipv4_PRE);
-  memset(&ipv4_PRE,0,sizeof(struct nf_hook_ops));
   nf_unregister_hook(&ipv6_LOCAL_OUT);
+#endif
+  memset(&ipv4_PRE,0,sizeof(struct nf_hook_ops));
   memset(&ipv6_LOCAL_OUT,0,sizeof(struct nf_hook_ops));
 }
 
-int char_dev_init(void) 
+int char_dev_init(void)
 {
   to4_dev_major=register_chrdev(0,"dirt4",&to4_fops);
   if (to4_dev_major<0)
@@ -380,7 +393,7 @@ int char_dev_init(void)
   return 0;
 }
 
-void char_dev_cleanup(void) 
+void char_dev_cleanup(void)
 {
   device_destroy(dev_class,MKDEV(to6_dev_major,0));
   device_destroy(dev_class,MKDEV(to4_dev_major,0));
@@ -436,6 +449,7 @@ static int __init direct_init(void)
 {
   int rv=0,i;
 
+  preempt_disable();
   RUN=0; to4_jptr=0; to6_jptr=0;
   atomic_set(&to4_iptr,0);
   atomic_set(&to6_iptr,0);
@@ -475,6 +489,10 @@ static void __exit direct_exit(void)
   exitnow=1;
   mutex_unlock(&to4_sem);
   mutex_unlock(&to6_sem);
+  wkup4=MAX_HELPER_READ_WRITE_RETRY;
+  wkup6=MAX_HELPER_READ_WRITE_RETRY;
+  wake_up_interruptible(&to4_queue);
+  wake_up_interruptible(&to6_queue);
   unregister_handlers();
   release_local_sockets();
   msleep(0x5dc);
