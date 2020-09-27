@@ -3,10 +3,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/wait.h>
 #include "directobot.h"
 #include "../../common/dirtlib.h"
 #include "relay_server.h"
+#include "state_table.h"
 
 #define HOST_FILE_PATH "/etc/direct_host.conf"
 
@@ -28,22 +33,22 @@ void read_host_conf(FILE *drfp)
     {
       memset(line,0,0xff);
       if (fscanf(drfp,"%s",line)==EOF)
-	break;
+        break;
     }
   while (memcmp(line,"TCP",3)&&memcmp(line,"UDP",3));
   if (!memcmp(line,"TCP",3))
     do
       {
-	if (fscanf(drfp,"%d%c",&(EXCLUDED_TCP_PP[i]),&c)==EOF)
-	  break;;
-	i++;
+        if (fscanf(drfp,"%d%c",&(EXCLUDED_TCP_PP[i]),&c)==EOF)
+          break;;
+        i++;
       }
     while (c!='\n');
   else if (!memcmp(line,"UDP",3))
     do
       {
         if (fscanf(drfp,"%d%c",&(EXCLUDED_TCP_PP[i]),&c)==EOF)
-	  break;;
+          break;;
         i++;
       }
     while (c!='\n');
@@ -52,14 +57,14 @@ void read_host_conf(FILE *drfp)
     {
       memset(line,0,0xff);
       if (fscanf(drfp,"%s",line)==EOF)
-	break;
+        break;
     }
   while (memcmp(line,"TCP",3)&&memcmp(line,"UDP",3));
   if (!memcmp(line,"TCP",3))
     do
       {
         if (fscanf(drfp,"%d%c",&(EXCLUDED_TCP_PP[i]),&c)==EOF)
-	  break;
+          break;
         i++;
       }
     while (c!='\n');
@@ -67,7 +72,7 @@ void read_host_conf(FILE *drfp)
     do
       {
         if (fscanf(drfp,"%d%c",&(EXCLUDED_TCP_PP[i]),&c)==EOF)
-	  break;
+          break;
         i++;
       }
     while (c!='\n');
@@ -121,7 +126,7 @@ int main(int argc,char *argv[])
     }
   conf_msg=(uint16_t *)(&(direct_msg[1]));
   *conf_msg=htons(i);
-  if 
+  if
     (
      sendto
      (
@@ -160,7 +165,7 @@ int main(int argc,char *argv[])
       perror("Cannot configure kernel module");
       return -3;
     }
-  if 
+  if
     (bind(v4sock_in,(struct sockaddr *)&receivesocket,sizeof(receivesocket))<0)
     {
       perror("Cannot bind port");
@@ -186,11 +191,35 @@ int main(int argc,char *argv[])
   while (1)
     {
       direct_msg_len=read(to6_dirt_dev,direct_msg,DIRECTOBOT_BUFFER_SIZE);
-      usleep(1);
       switch (direct_msg[0])
         {
         case FROM6_INCOMING:
+        case FROM6_INCOMING_TO_FRAG:
           break;
+        case FROM4_INCOMING_TO_FRAG:
+          {
+            switch (chk_in4_msg(&(direct_msg[1]),direct_msg_len-1))
+              {
+              case NO_CODE:
+                {
+                  sendto6_tofrag(&(direct_msg[1]),direct_msg_len-1,NO_CODE);
+                  break;
+                }
+              case RELAY_TO6:
+                {
+                  sendto6_tofrag(&(direct_msg[1]),direct_msg_len-1,RELAY_TO6);
+                  break;
+                }
+              case RELAY_TO6DR:
+                {
+                  sendto6_tofrag
+                    (&(direct_msg[1]),direct_msg_len-1,RELAY_TO6DR);
+                  break;
+                }
+                default: break;
+              }
+            break;
+          }
         case FROM4_INCOMING:
           {
             switch (chk_in4_msg(&(direct_msg[1]),direct_msg_len-1))
@@ -222,6 +251,7 @@ int main(int argc,char *argv[])
                 }
               default: break;
               }
+            break;
           }
         default: break;
         }
@@ -229,7 +259,32 @@ int main(int argc,char *argv[])
       switch (direct_msg[0])
         {
         case FROM4_INCOMING:
+        case FROM4_INCOMING_TO_FRAG:
           break;
+        case FROM6_INCOMING_TO_FRAG:
+          {
+            switch (chk_in6_msg(&(direct_msg[1]),direct_msg_len-1))
+              {
+              case NO_CODE:
+                {
+                  sendto4_tofrag(&(direct_msg[1]),direct_msg_len-1,NO_CODE);
+                  break;
+                }
+              case RELAY_TO4:
+                {
+                  sendto4_tofrag(&(direct_msg[1]),direct_msg_len-1,RELAY_TO4);
+                  break;
+                }
+              case RELAY_TO4DR:
+                {
+                  sendto4_tofrag
+                    (&(direct_msg[1]),direct_msg_len-1,RELAY_TO4DR);
+                  break;
+                }
+              default: break;
+              }
+            break;
+          }
         case FROM6_INCOMING:
           {
             switch (chk_in6_msg(&(direct_msg[1]),direct_msg_len-1))
@@ -251,6 +306,7 @@ int main(int argc,char *argv[])
                 }
               default: break;
               }
+            break;
           }
         case GO:
           break;
