@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
 #include <linux/types.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
@@ -11,9 +13,9 @@
 #include "../../common/dirtlib.h"
 
 //#define RAND_MAX 0xffff
+#define MAX_FRAG_DIM 1112
 
 int one=1;
-int sock_max_len=14000;
 const int *oneval=&one;
 static int raws_icmp=0;
 static int raws_icmp6=0;
@@ -54,17 +56,115 @@ void rcv_from_relay(unsigned char *pkt,int pkt_len)
     {
     case IPPROTO_UDP:
       {
-	rcv_from_relay_udp(pkt,buffer,hdr4,hdr6,s6_in,raws_udp6);
-	break;
+        rcv_from_relay_udp(pkt,buffer,hdr4,hdr6,s6_in,raws_udp6);
+        break;
       }
     case IPPROTO_TCP:
       {
-	rcv_from_relay_tcp(pkt,buffer,hdr4,hdr6,s6_in,raws_tcp6);
+        rcv_from_relay_tcp(pkt,buffer,hdr4,hdr6,s6_in,raws_tcp6);
         break;
       }
     case IPPROTO_ICMP:
       {
-	rcv_from_relay_icmp(pkt,buffer,hdr4,hdr6,s6_in,raws_icmp6);
+        rcv_from_relay_icmp(pkt,buffer,hdr4,hdr6,s6_in,raws_icmp6);
+        break;
+      }
+    default: return;
+    }
+}
+
+void send_to_fragment(unsigned char *pkt,int pkt_len)
+{
+  struct ip6_hdr *hdr6;
+  struct iphdr *hdr4,*hdr4_full,*hdr4_frag;
+  int orig_plen,offset_plen=0;
+  unsigned char buffer[DIRECTO6_BUFFER_SIZE],buffer2[DIRECTO6_BUFFER_SIZE];
+
+  hdr4=(struct iphdr *)buffer;
+  hdr6=(struct ip6_hdr *)pkt;
+  hdr4->ihl=5;
+  hdr4->version=4;
+  hdr4->ttl=hdr6->ip6_ctlun.ip6_un1.ip6_un1_hlim;
+  hdr4->tos=hdr6->ip6_ctlun.ip6_un2_vfc;
+  hdr4->id=htons((uint16_t)rand());
+  hdr4->frag_off=0; hdr4->check=0;
+  memcpy(&(hdr4->saddr),&ip4src,sizeof(struct in_addr));
+  memcpy(&(hdr4->daddr),&ipv4_relay,sizeof(struct in_addr));
+  switch (hdr6->ip6_ctlun.ip6_un1.ip6_un1_nxt)
+    {
+    case IPPROTO_UDP:
+      {
+        send_to_relay_udp(pkt,buffer,hdr6,hdr4,s_in,raws_udp);
+        break;
+      }
+    case IPPROTO_TCP:
+      {
+        send_to_relay_tcp(pkt,buffer,hdr6,hdr4,s_in,raws_tcp);
+        break;
+      }
+    case IPPROTO_ICMPV6:
+      {
+        send_to_relay_icmp(pkt,buffer,hdr6,hdr4,s_in,raws_icmp);
+        break;
+      }
+    default: return;
+    }
+  hdr4_full=hdr4;
+  hdr4_frag=(struct iphdr *)buffer2;
+  orig_plen=ntohs(hdr4_full->tot_len)-sizeof(struct iphdr);
+  memcpy(buffer2,buffer,sizeof(struct iphdr));
+  hdr4_full->tot_len=htons(MAX_FRAG_DIM+sizeof(struct iphdr));
+  hdr4_full->frag_off=htons(offset_plen|0x2000);
+  offset_plen+=MAX_FRAG_DIM;
+  while (offset_plen<orig_plen)
+    {
+      switch (hdr6->ip6_ctlun.ip6_un1.ip6_un1_nxt)
+        {
+        case IPPROTO_UDP:
+          {
+            send_to_relay_udp(pkt,buffer,hdr6,hdr4,s_in,raws_udp);
+            break;
+          }
+        case IPPROTO_TCP:
+          {
+            send_to_relay_tcp_fragment
+              (buffer,buffer2,hdr4_full,hdr4_frag,s_in,raws_tcp);
+            break;
+          }
+        case IPPROTO_ICMPV6:
+          {
+            send_to_relay_icmp(pkt,buffer,hdr6,hdr4,s_in,raws_icmp);
+            break;
+          }
+        default: return;
+        }
+      memcpy
+        (
+         buffer+sizeof(struct iphdr),buffer+sizeof(struct iphdr)+offset_plen,
+         MAX_FRAG_DIM
+         );
+      hdr4_full->frag_off=htons((offset_plen/0x8)|0x2000);
+      offset_plen+=MAX_FRAG_DIM;
+    }
+  offset_plen-=MAX_FRAG_DIM;
+  hdr4_full->tot_len=htons(orig_plen-offset_plen+sizeof(struct iphdr));
+  hdr4_full->frag_off=htons(offset_plen/0x8);
+  switch (hdr6->ip6_ctlun.ip6_un1.ip6_un1_nxt)
+    {
+    case IPPROTO_UDP:
+      {
+        send_to_relay_udp(pkt,buffer,hdr6,hdr4,s_in,raws_udp);
+        break;
+      }
+    case IPPROTO_TCP:
+      {
+        send_to_relay_tcp_fragment
+          (buffer,buffer2,hdr4_full,hdr4_frag,s_in,raws_tcp);
+        break;
+      }
+    case IPPROTO_ICMPV6:
+      {
+        send_to_relay_icmp(pkt,buffer,hdr6,hdr4,s_in,raws_icmp);
         break;
       }
     default: return;
@@ -74,8 +174,6 @@ void rcv_from_relay(unsigned char *pkt,int pkt_len)
 void send_to_relay(unsigned char *pkt,int pkt_len)
 {
   struct ip6_hdr *hdr6;
-  struct tcphdr *tcph;
-  uint8_t v6protocol;
   struct iphdr *hdr4;
   unsigned char buffer[DIRECTO6_BUFFER_SIZE];
 
@@ -94,18 +192,18 @@ void send_to_relay(unsigned char *pkt,int pkt_len)
     {
     case IPPROTO_UDP:
       {
-	send_to_relay_udp(pkt,buffer,hdr6,hdr4,s_in,raws_udp);
-	break;
+        send_to_relay_udp(pkt,buffer,hdr6,hdr4,s_in,raws_udp);
+        break;
       }
     case IPPROTO_TCP:
       {
-	send_to_relay_tcp(pkt,buffer,hdr6,hdr4,s_in,raws_tcp);
-	break;
+        send_to_relay_tcp(pkt,buffer,hdr6,hdr4,s_in,raws_tcp);
+        break;
       }
     case IPPROTO_ICMPV6:
       {
-	send_to_relay_icmp(pkt,buffer,hdr6,hdr4,s_in,raws_icmp);
-	break;
+        send_to_relay_icmp(pkt,buffer,hdr6,hdr4,s_in,raws_icmp);
+        break;
       }
     default: return;
     }
