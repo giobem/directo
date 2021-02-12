@@ -237,7 +237,10 @@ unsigned int ipv4_handler_PRE
                 return NF_STOLEN;
               }
             if (hdr4->saddr==raddr4)
-              return NF_DROP;
+              {
+                kfree_skb(skb);
+                return NF_DROP;
+              }
           }
         else if (hdr4->saddr==raddr4)
           break;
@@ -262,6 +265,7 @@ unsigned int ipv4_handler_PRE
   atomic_set(&(to6_pkt[iptrt].len),atomic_read(&(tot_len)));
   wkup6=MAX_HELPER_READ_WRITE_RETRY;
   wake_up_interruptible(&to6_queue);
+  kfree_skb(skb);
   return NF_STOLEN;
 }
 
@@ -318,6 +322,7 @@ unsigned int ipv6_handler_LOCAL_OUT
   atomic_set(&(to4_pkt[iptrt].len),atomic_read(&(tot_len)));
   wkup4=MAX_HELPER_READ_WRITE_RETRY;
   wake_up_interruptible(&to4_queue);
+  kfree_skb(skb);
   return NF_STOLEN;
 }
 
