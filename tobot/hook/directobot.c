@@ -31,7 +31,7 @@
 #define UDPCONF 33
 #define GO 253
 #define EXITNOW 254
-#define MAX_PACKET_BUFFERS 0x10
+#define MAX_PACKET_BUFFERS 0x80
 #define MAX_PACKET_BUFFER_SIZE 0x10001
 #define MAX_HELPER_READ_WRITE_RETRY MAX_PACKET_BUFFERS*2
 
@@ -238,10 +238,7 @@ unsigned int ipv6_handler_PRE
           case NDISC_REDIRECT:
             return NF_ACCEPT;
           default:
-            {
-              kfree_skb(skb);
-              return NF_DROP;
-            }
+            return NF_DROP;
           }
         break;
       }
@@ -250,10 +247,7 @@ unsigned int ipv6_handler_PRE
     case IPPROTO_TCP:
       break;
     default:
-      {
-        kfree_skb(skb);
-        return NF_DROP;
-      }
+      return NF_DROP;
     }
   if (atomic_read(&to4_iptr)>=MAX_PACKET_BUFFERS)
     atomic_set(&to4_iptr,0);
@@ -300,10 +294,7 @@ unsigned int ipv4_handler_PRE
           case ICMP_ECHO:
             break;
           default:
-            {
-              kfree_skb(skb);
-              return NF_DROP;
-            }
+            return NF_DROP;
           }
         break;
       }
@@ -353,10 +344,7 @@ unsigned int ipv4_handler_PRE
         break;
       }
     default:
-      {
-        kfree_skb(skb);
-        return NF_DROP;
-      }
+      return NF_DROP;
     }
   if (atomic_read(&to6_iptr)>=MAX_PACKET_BUFFERS)
     atomic_set(&to6_iptr,0);
