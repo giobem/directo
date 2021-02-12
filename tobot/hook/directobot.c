@@ -238,7 +238,10 @@ unsigned int ipv6_handler_PRE
           case NDISC_REDIRECT:
             return NF_ACCEPT;
           default:
-            return NF_DROP;
+            {
+              kfree_skb(skb);
+              return NF_DROP;
+            }
           }
         break;
       }
@@ -247,7 +250,10 @@ unsigned int ipv6_handler_PRE
     case IPPROTO_TCP:
       break;
     default:
-      return NF_DROP;
+      {
+        kfree_skb(skb);
+        return NF_DROP;
+      }
     }
   if (atomic_read(&to4_iptr)>=MAX_PACKET_BUFFERS)
     atomic_set(&to4_iptr,0);
@@ -261,6 +267,7 @@ unsigned int ipv6_handler_PRE
   atomic_set(&(to4_pkt[iptrt].len),atomic_read(&(tot_len)));
   wkup=MAX_HELPER_READ_WRITE_RETRY;
   wake_up_interruptible(&to_queue);
+  kfree_skb(skb);
   return NF_STOLEN;
 }
 
@@ -293,7 +300,10 @@ unsigned int ipv4_handler_PRE
           case ICMP_ECHO:
             break;
           default:
-            return NF_DROP;
+            {
+              kfree_skb(skb);
+              return NF_DROP;
+            }
           }
         break;
       }
@@ -343,7 +353,10 @@ unsigned int ipv4_handler_PRE
         break;
       }
     default:
-      return NF_DROP;
+      {
+        kfree_skb(skb);
+        return NF_DROP;
+      }
     }
   if (atomic_read(&to6_iptr)>=MAX_PACKET_BUFFERS)
     atomic_set(&to6_iptr,0);
@@ -353,6 +366,7 @@ unsigned int ipv4_handler_PRE
   atomic_set(&(to6_pkt[iptrt].len),atomic_read(&(tot_len)));
   wkup=MAX_HELPER_READ_WRITE_RETRY;
   wake_up_interruptible(&to_queue);
+  kfree_skb(skb);
   return NF_STOLEN;
 }
 
